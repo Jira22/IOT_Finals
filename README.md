@@ -25,7 +25,7 @@
 | Set of wires | 1 |
 | GPIO cable | 1 |
 | DIP circuit | 1 |
-| ESP32 x1 | 1 |
+| ESP32 | 1 |
 | LCD module | 1 |
 
 ## TRIG vs ECHO
