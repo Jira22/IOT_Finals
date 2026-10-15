@@ -28,7 +28,7 @@
 | ESP32 x1 | 1 |
 | LCD module | 1 |
 
-##TRIG vs ECHO
+## TRIG vs ECHO
 
 - TRIG is an output from the Pi, which sends a short pulse to the sensor.
 - ECHO is an input to the Pi, which listens for the sensor’s pulse.
