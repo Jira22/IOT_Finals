@@ -31,6 +31,11 @@ Home assistant project: Smart room
 | DIP circuit | 1 |
 | ESP32 board | 1 |
 | LCD | 1 |
+| Potentiometer (50k) | 1 |
+| 1kΩ Resistor | 4 |
+| 220Ω Resistor | 1 |
+| NPN Transistor S8050 | 1 |
+
 
 ## Wiring diagram
 | Wire from | Wire to |
