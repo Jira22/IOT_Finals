@@ -85,3 +85,16 @@ Raspberry Pi GPIO18 ── 1kΩ ── S8050 Base
 Raspberry Pi GND ──────────── S8050 Emitter
 
 S8050 Collector ───────────── Motor (−)
+
+## GPIO Pin Map (BCM numbering)
+
+| Function | Part | Signal | GPIO (BCM) | Physical pin |
+|---|---|---|---|---|
+| Door | HC-SR04 | TRIG | GPIO23 | 16 |
+| Door | HC-SR04 | ECHO (through divider) | GPIO24 | 18 |
+| Door | Active buzzer | + | GPIO18 | 12 |
+| Fan | DHT11 | DATA | GPIO4 | 7 |
+| Fan | Relay module | IN | GPIO17 | 11 |
+| Light | PIR sensor | OUT | GPIO27 | 13 |
+| Light | LDR module | DO | GPIO22 | 15 |
+| Light | Relay module | IN | GPIO5 | 29 |
