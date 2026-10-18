@@ -92,7 +92,7 @@ S8050 Collector ───────────── Motor (−)
 |---|---|---|---|---|
 | Door | HC-SR04 | TRIG | GPIO23 | 16 |
 | Door | HC-SR04 | ECHO (through divider) | GPIO24 | 18 |
-| Door | Active buzzer | + | GPIO18 | 12 |
+| Door | Passive buzzer | + | GPIO18 | 12 |
 | Fan | DHT11 | DATA | GPIO4 | 7 |
 | Fan | Relay module | IN | GPIO17 | 11 |
 | Light | PIR sensor | OUT | GPIO27 | 13 |
