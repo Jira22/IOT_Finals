@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 import time
 import paho.mqtt.client as mqtt
-from gpiozero import MotionSensor, DigitalInputDevice, OutputDevice
+from gpiozero import MotionSensor, OutputDevice
 
 # ----------------------------- Settings ---------------------------------
-PIR_PIN = 27
-LDR_PIN = 22
-LIGHT_PIN = 5
+PIR_PIN = 17
+LIGHT_PIN = 23
 
-LIGHT_TIMEOUT_S = 30      
+LIGHT_TIMEOUT_S = 10      
 POLL_INTERVAL_S = 0.5
-PIR_WARMUP_S = 30         
-DARK_WHEN_HIGH = True
-RELAY_ACTIVE_HIGH = False
+PIR_WARMUP_S = 10         
+RELAY_ACTIVE_HIGH = True   # LED driven directly
 
 # MQTT Configuration (CHANGE TO YOUR LAPTOP'S IP ADDRESS)
 MQTT_BROKER = "192.168.99.90" 
@@ -23,19 +21,16 @@ TOPIC_MOTION_STATE = "homeassistant/binary_sensor/motion/state"
 
 # --------------------------- Hardware setup ------------------------------
 pir = MotionSensor(PIR_PIN)
-ldr = DigitalInputDevice(LDR_PIN)
 light = OutputDevice(LIGHT_PIN, active_high=RELAY_ACTIVE_HIGH, initial_value=False)
 
 # Global tracker to remember if the light was overridden by Home Assistant
 manual_override_time = 0.0
 
-def is_dark() -> bool:
-    return bool(ldr.value) == DARK_WHEN_HIGH
-
 # --------------------------- MQTT setup ----------------------------------
-def on_connect(client, userdata, flags, rc):
-    print(f"Connected to MQTT Broker with code {rc}")
+def on_connect(client, userdata, flags, reason_code, properties):
+    print(f"Connected to MQTT Broker: {reason_code}")
     client.subscribe(TOPIC_LIGHT_SET)
+    client.publish(TOPIC_LIGHT_STATE, "ON" if light.value else "OFF", retain=True)
 
 def on_message(client, userdata, msg):
     global manual_override_time
@@ -52,7 +47,7 @@ def on_message(client, userdata, msg):
             light.off()
             client.publish(TOPIC_LIGHT_STATE, "OFF", retain=True)
 
-mqtt_client = mqtt.Client()
+mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 
@@ -87,7 +82,7 @@ def main() -> None:
             last_reported_motion = motion
 
         if motion:
-            if not light.value and is_dark():
+            if not light.value:
                 light.on()
                 on_light_change(True)
             if light.value:
@@ -112,4 +107,3 @@ if __name__ == "__main__":
         light.off()
         light.close()
         pir.close()
-        ldr.close()

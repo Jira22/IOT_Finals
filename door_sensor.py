@@ -6,9 +6,9 @@ import paho.mqtt.client as mqtt
 from gpiozero import DistanceSensor, PWMOutputDevice
 
 # ----------------------------- Settings ---------------------------------
-TRIG_PIN = 23
+TRIG_PIN = 25
 ECHO_PIN = 24
-BUZZER_PIN = 18
+BUZZER_PIN = 22   # red alarm LED (was a buzzer)
 
 MAX_DISTANCE_M = 2.0     
 THRESHOLD_CM = 10.0      
@@ -44,14 +44,14 @@ def beep(times: int = 1, on: float = 0.15, off: float = 0.1, freq: int = TONE_OP
     with buzzer_lock:
         buzzer.frequency = freq
         for _ in range(times):
-            buzzer.value = 0.5   
+            buzzer.value = 1   # alarm is an LED now: full on, no tone
             time.sleep(on)
             buzzer.value = 0     
             time.sleep(off)
 
 # --------------------------- MQTT setup ----------------------------------
-def on_connect(client, userdata, flags, rc):
-    print(f"Connected to MQTT Broker with code {rc}")
+def on_connect(client, userdata, flags, reason_code, properties):
+    print(f"Connected to MQTT Broker: {reason_code}")
     client.subscribe(TOPIC_BUZZER_SET)
     client.publish(TOPIC_BUZZER_STATE, "OFF", retain=True)
 
@@ -68,7 +68,7 @@ def trigger_remote_alarm():
     beep(times=3, on=0.1, off=0.1, freq=TONE_ALARM_HZ)
     mqtt_client.publish(TOPIC_BUZZER_STATE, "OFF", retain=True)
 
-mqtt_client = mqtt.Client()
+mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 

@@ -1,37 +1,40 @@
 #!/usr/bin/env python3
+import glob
 import time
-import board
-import adafruit_dht
 import paho.mqtt.client as mqtt
 from gpiozero import OutputDevice
 
 # ----------------------------- Settings ---------------------------------
-DHT_PIN = board.D4          
-FAN_PIN = 17                
+FAN_PIN = 18                
 
 FAN_ON_TEMP_C = 30.0        
 FAN_OFF_TEMP_C = 28.0       
 POLL_INTERVAL_S = 3         
-RELAY_ACTIVE_HIGH = False
+RELAY_ACTIVE_HIGH = True   # S8050 transistor, not an active-low relay
 
 # MQTT Configuration (CHANGE TO YOUR LAPTOP'S IP ADDRESS)
 MQTT_BROKER = "192.168.99.90"
 MQTT_PORT = 1883
 TOPIC_TEMP_STATE = "homeassistant/sensor/temperature/state"
+TOPIC_HUMIDITY_STATE = "homeassistant/sensor/humidity/state"
 TOPIC_FAN_STATE = "homeassistant/switch/room_fan/state"
 TOPIC_FAN_SET = "homeassistant/switch/room_fan/set"
 
 # --------------------------- Hardware setup ------------------------------
-dht = adafruit_dht.DHT11(DHT_PIN)
+# DHT11 is read by the kernel driver: add 'dtoverlay=dht11,gpiopin=4' to /boot/firmware/config.txt
+# (the Adafruit library fails on the Pi 5)
+IIO_DIR = glob.glob('/sys/bus/iio/devices/iio:device*')[0]
 fan = OutputDevice(FAN_PIN, active_high=RELAY_ACTIVE_HIGH, initial_value=False)
 
 # Global manual control flag
 manual_override = False
 
 # --------------------------- MQTT setup ----------------------------------
-def on_connect(client, userdata, flags, rc):
-    print(f"Connected to MQTT Broker with code {rc}")
+def on_connect(client, userdata, flags, reason_code, properties):
+    print(f"Connected to MQTT Broker: {reason_code}")
     client.subscribe(TOPIC_FAN_SET)
+    # clear any stale retained state left by an earlier run
+    client.publish(TOPIC_FAN_STATE, "ON" if fan.value else "OFF", retain=True)
 
 def on_message(client, userdata, msg):
     global manual_override
@@ -49,16 +52,20 @@ def on_message(client, userdata, msg):
             fan.off()
             client.publish(TOPIC_FAN_STATE, "OFF", retain=True)
 
-mqtt_client = mqtt.Client()
+mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 
 def read_dht(retries: int = 3):
     for _ in range(retries):
         try:
-            return dht.temperature, dht.humidity
-        except (RuntimeError, OverflowError, ValueError):
-            time.sleep(2)  
+            with open(f"{IIO_DIR}/in_temp_input") as f:
+                temp = int(f.read()) / 1000
+            with open(f"{IIO_DIR}/in_humidityrelative_input") as f:
+                humidity = int(f.read()) / 1000
+            return temp, humidity
+        except (OSError, ValueError):  # DHT11 reads fail now and then (EIO)
+            time.sleep(2)
     return None, None
 
 def on_fan_change(is_on: bool, temp: float) -> None:
@@ -83,10 +90,11 @@ def main() -> None:
         if temp is None:
             print("Sensor read failed, keeping fan state unchanged")
         else:
-            print(f"Temp: {temp:.1f} C  Humidity: {humidity}%  Fan: {'ON' if fan.value else 'OFF'}")
+            print(f"Temp: {temp:.1f} C  Humidity: {humidity:.0f}%  Fan: {'ON' if fan.value else 'OFF'}")
             
             # Send live stats data to Home Assistant dashboard
             mqtt_client.publish(TOPIC_TEMP_STATE, str(temp), retain=True)
+            mqtt_client.publish(TOPIC_HUMIDITY_STATE, str(humidity), retain=True)
 
             # Auto control loop ONLY executes if Home Assistant hasn't issued a manual override override command
             if not manual_override:
@@ -108,4 +116,3 @@ if __name__ == "__main__":
         mqtt_client.loop_stop()
         fan.off()
         fan.close()
-        dht.exit()
