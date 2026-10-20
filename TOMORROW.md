@@ -7,6 +7,13 @@
 - [ ] Water sensor (red board, from the teacher's list), if not already borrowed
 - [ ] Multimeter
 
+## Layout checks (two boards, T-cobbler on board 1)
+- [ ] Board 1 has the T-cobbler at columns 1 to 20; check the printed labels to see which end is pin 1
+- [ ] Count the columns on your boards (the plan assumes 63 each) and that the T-cobbler body leaves rows a to c and h to j free
+- [ ] The sensors, LEDs and fan driver follow the column tables in README.md ("Breadboard layout")
+- [ ] The three rail links are in (board 1 top 5V to bottom 5V, bottom GND to board 2, bottom 5V to board 2)
+- [ ] The ECHO wire goes from the HC-SR04 to the divider on board 2
+
 ## Before powering the Pi
 - [ ] Run `ipconfig` on the laptop and note its IPv4 address
 - [ ] Put it in `MQTT_BROKER` in `fan_control.py`, `light_control.py`, `door_sensor.py` and `water_level.py`

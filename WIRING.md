@@ -4,6 +4,7 @@ Status (2026-10-21): stages 1-4 and 6 are wired. Stage 6 (ultrasonic) is not tes
 stage 7 (water level) are postponed to the next lab visit, see TOMORROW.md. The LCD was dropped.
 
 Pin numbers are the Pi's physical pins, with the BCM GPIO in brackets. The full pin map is in README.md.
+The Pi is connected through the T-cobbler on board 1, so "Pin 7" means a jumper from the T-cobbler column of pin 7. The column of each pin and where every part sits on the two boards are in the "Breadboard layout" section of README.md.
 Power the Pi off while wiring. Build the stages in order and test each one before the next.
 
 Wire colours: red = 5V, orange = 3.3V, black = GND, anything else = signal.
