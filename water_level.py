@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import time
 import paho.mqtt.client as mqtt
 from gpiozero import DigitalInputDevice, LED
@@ -9,9 +10,10 @@ LED_PIN = 26
 FLICKER_S = 0.15
 POLL_INTERVAL_S = 0.5
 
-# MQTT Configuration (CHANGE TO YOUR LAPTOP'S IP ADDRESS)
-MQTT_BROKER = "192.168.99.90"
+# MQTT Configuration: the laptop's IP, set with MQTT_BROKER=<ip> when starting, default below
+MQTT_BROKER = os.environ.get("MQTT_BROKER", "192.168.99.90")
 MQTT_PORT = 1883
+TOPIC_AVAIL = "homeassistant/binary_sensor/water_level/availability"  # "offline" is sent by the broker if this script dies
 TOPIC_WATER_STATE = "homeassistant/binary_sensor/water_level/state"
 
 # --------------------------- Hardware setup ------------------------------
@@ -22,9 +24,11 @@ led = LED(LED_PIN)
 # --------------------------- MQTT setup ----------------------------------
 def on_connect(client, userdata, flags, reason_code, properties):
     print(f"Connected to MQTT Broker: {reason_code}")
+    client.publish(TOPIC_AVAIL, "online", retain=True)
     client.publish(TOPIC_WATER_STATE, "High" if sensor.is_active else "Normal", retain=True)
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+mqtt_client.will_set(TOPIC_AVAIL, "offline", retain=True)
 mqtt_client.on_connect = on_connect
 
 def set_water(high: bool) -> None:
@@ -36,11 +40,8 @@ def set_water(high: bool) -> None:
         led.off()
 
 def main() -> None:
-    try:
-        mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        mqtt_client.loop_start()
-    except Exception as e:
-        print(f"MQTT connection failed: {e}")
+    mqtt_client.connect_async(MQTT_BROKER, MQTT_PORT, 60)  # retries until the broker is up
+    mqtt_client.loop_start()
 
     last = None
     print("Watching water level (Ctrl+C to stop)")
@@ -57,6 +58,10 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        try:
+            mqtt_client.publish(TOPIC_AVAIL, "offline", retain=True).wait_for_publish(2)
+        except Exception:
+            pass  # broker unreachable, nobody to tell
         mqtt_client.loop_stop()
         led.off()
         led.close()

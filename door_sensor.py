@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import time
 import statistics
 import threading
@@ -24,12 +25,14 @@ TONE_ALARM_HZ = 3000
 
 DOOR_OPEN_ALARM_S = 30   
 
-# MQTT Configuration (CHANGE TO YOUR LAPTOP'S IP ADDRESS)
-MQTT_BROKER = "192.168.99.90"
+# MQTT Configuration: the laptop's IP, set with MQTT_BROKER=<ip> when starting, default below
+MQTT_BROKER = os.environ.get("MQTT_BROKER", "192.168.99.90")
 MQTT_PORT = 1883
+TOPIC_AVAIL = "homeassistant/binary_sensor/door/availability"  # "offline" is sent by the broker if this script dies
 TOPIC_DOOR_STATE = "homeassistant/binary_sensor/door/state"
 TOPIC_BUZZER_STATE = "homeassistant/switch/buzzer/state"
 TOPIC_BUZZER_SET = "homeassistant/switch/buzzer/set"
+TOPIC_MUTE_PRESS = "homeassistant/button/alarm_mute/press"
 
 # --------------------------- Hardware setup ------------------------------
 sensor = DistanceSensor(echo=ECHO_PIN, trigger=TRIG_PIN, max_distance=MAX_DISTANCE_M)
@@ -37,6 +40,7 @@ sensor = DistanceSensor(echo=ECHO_PIN, trigger=TRIG_PIN, max_distance=MAX_DISTAN
 # Lock to avoid background thread beep collisions with main threat warnings
 buzzer_lock = threading.Lock()
 manual_buzz = threading.Event()  # set while the HA buzzer switch is ON
+alarm_muted = threading.Event()  # set by the HA mute button, cleared when the door opens or closes
 
 def beep(times: int = 1, on: float = 0.15, off: float = 0.1, freq: int = TONE_OPEN_HZ) -> None:
     # PWM exists only while beeping: a software-PWM thread running all the time jitters the echo timing
@@ -54,13 +58,21 @@ def beep(times: int = 1, on: float = 0.15, off: float = 0.1, freq: int = TONE_OP
 # --------------------------- MQTT setup ----------------------------------
 def on_connect(client, userdata, flags, reason_code, properties):
     print(f"Connected to MQTT Broker: {reason_code}")
-    client.subscribe(TOPIC_BUZZER_SET)
+    client.publish(TOPIC_AVAIL, "online", retain=True)
+    client.subscribe([(TOPIC_BUZZER_SET, 0), (TOPIC_MUTE_PRESS, 0)])
     client.publish(TOPIC_BUZZER_STATE, "OFF", retain=True)
 
 def on_message(client, userdata, msg):
+    if msg.topic == TOPIC_MUTE_PRESS:
+        print("Mute pressed in HA")
+        alarm_muted.set()
+        manual_buzz.clear()
+        client.publish(TOPIC_BUZZER_STATE, "OFF", retain=True)
+        return
+
     payload = msg.payload.decode().upper()
     print(f"Received Buzzer override command from HA: {payload}")
-    
+
     if payload == "ON" and not manual_buzz.is_set():
         manual_buzz.set()
         client.publish(TOPIC_BUZZER_STATE, "ON", retain=True)
@@ -74,6 +86,7 @@ def ring_until_off():
         beep(times=1, on=0.3, off=0.2, freq=TONE_ALARM_HZ)
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+mqtt_client.will_set(TOPIC_AVAIL, "offline", retain=True)
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
 
@@ -109,11 +122,8 @@ def on_door_alarm(open_for_s: float) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] ALARM: door open for {open_for_s:.0f}s")
 
 def main() -> None:
-    try:
-        mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        mqtt_client.loop_start()
-    except Exception as e:
-        print(f"MQTT Connection failed: {e}")
+    mqtt_client.connect_async(MQTT_BROKER, MQTT_PORT, 60)  # retries until the broker is up
+    mqtt_client.loop_start()
 
     baseline = calibrate()
     door_open = False
@@ -139,6 +149,7 @@ def main() -> None:
         if change_count >= CONFIRM_READINGS:
             door_open = deviates
             change_count = 0
+            alarm_muted.clear()  # a mute only lasts for one open period
             if door_open:
                 open_since = time.time()
                 on_door_open()
@@ -156,7 +167,8 @@ def main() -> None:
                     alarm_active = True
                     on_door_alarm(open_for)
                 # one beep per loop: rings until the door closes, and the sensor still gets read between beeps
-                beep(times=1, on=0.3, off=0.1, freq=TONE_ALARM_HZ)
+                if not alarm_muted.is_set():
+                    beep(times=1, on=0.3, off=0.1, freq=TONE_ALARM_HZ)
 
         time.sleep(POLL_INTERVAL_S)
 
@@ -166,5 +178,9 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        try:
+            mqtt_client.publish(TOPIC_AVAIL, "offline", retain=True).wait_for_publish(2)
+        except Exception:
+            pass  # broker unreachable, nobody to tell
         mqtt_client.loop_stop()
         sensor.close()

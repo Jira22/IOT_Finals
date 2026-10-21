@@ -138,13 +138,21 @@ The S8050 pinout is E, B, C with the flat face towards you.
 - The switches only send an MQTT message. The matching script must be running on the Pi, or nothing happens.
 - **Light and fan:** a command from HA wins over the PIR and the temperature for 5 minutes (`MANUAL_HOLD_S`), then auto mode resumes.
 - **Buzzer:** the switch rings the buzzer until it is switched off (`door_sensor.py`).
+- **Fan temperature sliders:** "Fan on at" and "Fan off at" set the temperatures for auto mode (defaults 30 and 28 C). `fan_control.py` rejects a pair where ON is less than 1 C above OFF, and the slider snaps back. The values are kept as retained MQTT messages, so they survive restarts of the script.
+- **Mute alarm:** the button silences the door alarm and the manual buzzer. The mute lasts until the door opens or closes again.
+- **Notifications:** two automations in `config/automations.yaml` post a notification in HA (the bell in the sidebar) when the door has been open for 30 s or the water goes High, and clear it when the door closes or the water is back to Normal. No phone app is set up, so nothing is pushed to a phone.
 - **Water Level** is a text sensor (Normal / High), because a binary sensor can only show Wet / Dry.
 - **Run everything:** `bash ~/IOT_Finals/run_all.sh` starts all four scripts, Ctrl+C stops them.
+- **Kill everything:** `pkill -f "door_sensor|light_control|fan_control|water_level"` stops all four scripts, including copies left running in another terminal. Do this before starting them again or running a test script, since a running script holds its GPIO pins ("pin busy" error otherwise).
+- **Unavailable in HA:** every script reports `online` on its availability topic and the broker sends `offline` when it dies, so the entities of a stopped script show "Unavailable" instead of a stale state. The scripts also keep retrying the broker, so the Pi and the laptop can start in any order.
 - **Test scripts:** `buzzer_test.py`, `led_test.py` and `ultrasonic_test.py` check one part each. Stop the main scripts first, since they hold the pins.
 
 ## Setup notes
 - **DHT11 on the Pi 5:** the Adafruit library fails, so the kernel driver is used. Add `dtoverlay=dht11,gpiopin=4` to `/boot/firmware/config.txt` and reboot. `fan_control.py` reads `/sys/bus/iio/devices/iio:device*/`.
-- **MQTT broker:** `MQTT_BROKER` in every script is the laptop's IP, which changes per network. Run `ipconfig` and update it.
+- **MQTT broker (the laptop's IP):** the scripts connect to `192.168.99.90` unless told otherwise. The laptop's IP changes per network, so run `ipconfig` on the laptop and use the new IP in one of two ways:
+  - For one run, put it in front of the command: `MQTT_BROKER=<laptop IP> bash ~/IOT_Finals/run_all.sh` (or `MQTT_BROKER=<laptop IP> python3 ~/IOT_Finals/<script>.py`).
+  - Permanently, change the default IP at the end of this line in all four scripts and upload them again: `MQTT_BROKER = os.environ.get("MQTT_BROKER", "192.168.99.90")`.
+  - The Pi and the laptop must be on the same network, and Windows Firewall must allow port 1883.
 - **Home Assistant:** entities are defined in `config/configuration.yaml` (MQTT). Restart HA after changing it.
 - **Run a script on the Pi:** `python3 ~/IOT_Finals/<script>.py`
 - **Upload from Windows:** `cd` into the folder and run `scp <file> teamnano@<Pi IP>:~/IOT_Finals/` (scp treats `C:` as a hostname).
