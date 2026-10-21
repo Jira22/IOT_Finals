@@ -22,14 +22,14 @@ led = LED(LED_PIN)
 # --------------------------- MQTT setup ----------------------------------
 def on_connect(client, userdata, flags, reason_code, properties):
     print(f"Connected to MQTT Broker: {reason_code}")
-    client.publish(TOPIC_WATER_STATE, "ON" if sensor.is_active else "OFF", retain=True)
+    client.publish(TOPIC_WATER_STATE, "High" if sensor.is_active else "Normal", retain=True)
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_connect = on_connect
 
 def set_water(high: bool) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] Water level {'HIGH' if high else 'normal'}")
-    mqtt_client.publish(TOPIC_WATER_STATE, "ON" if high else "OFF", retain=True)
+    mqtt_client.publish(TOPIC_WATER_STATE, "High" if high else "Normal", retain=True)
     if high:
         led.blink(on_time=FLICKER_S, off_time=FLICKER_S)
     else:

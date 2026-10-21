@@ -9,7 +9,8 @@ FAN_PIN = 18
 
 FAN_ON_TEMP_C = 30.0        
 FAN_OFF_TEMP_C = 28.0       
-POLL_INTERVAL_S = 3         
+POLL_INTERVAL_S = 3
+MANUAL_HOLD_S = 300         # a command from HA wins over the temperature for this long
 RELAY_ACTIVE_HIGH = True   # S8050 transistor, not an active-low relay
 
 # MQTT Configuration (CHANGE TO YOUR LAPTOP'S IP ADDRESS)
@@ -26,8 +27,7 @@ TOPIC_FAN_SET = "homeassistant/switch/room_fan/set"
 IIO_DIR = glob.glob('/sys/bus/iio/devices/iio:device*')[0]
 fan = OutputDevice(FAN_PIN, active_high=RELAY_ACTIVE_HIGH, initial_value=False)
 
-# Global manual control flag
-manual_override = False
+manual_hold_until = 0.0
 
 # --------------------------- MQTT setup ----------------------------------
 def on_connect(client, userdata, flags, reason_code, properties):
@@ -37,20 +37,14 @@ def on_connect(client, userdata, flags, reason_code, properties):
     client.publish(TOPIC_FAN_STATE, "ON" if fan.value else "OFF", retain=True)
 
 def on_message(client, userdata, msg):
-    global manual_override
+    global manual_hold_until
     payload = msg.payload.decode().upper()
     print(f"Received Fan command from HA: {payload}")
-    
-    if payload == "ON":
-        manual_override = True
-        if not fan.value:
-            fan.on()
-            client.publish(TOPIC_FAN_STATE, "ON", retain=True)
-    elif payload == "OFF":
-        manual_override = False
-        if fan.value:
-            fan.off()
-            client.publish(TOPIC_FAN_STATE, "OFF", retain=True)
+
+    if payload in ("ON", "OFF"):
+        fan.on() if payload == "ON" else fan.off()
+        manual_hold_until = time.time() + MANUAL_HOLD_S  # auto temperature control is paused meanwhile
+        client.publish(TOPIC_FAN_STATE, payload, retain=True)
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_connect = on_connect
@@ -74,8 +68,6 @@ def on_fan_change(is_on: bool, temp: float) -> None:
     mqtt_client.publish(TOPIC_FAN_STATE, state, retain=True)
 
 def main() -> None:
-    global manual_override
-    
     try:
         mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
         mqtt_client.loop_start()
@@ -96,8 +88,7 @@ def main() -> None:
             mqtt_client.publish(TOPIC_TEMP_STATE, str(temp), retain=True)
             mqtt_client.publish(TOPIC_HUMIDITY_STATE, str(humidity), retain=True)
 
-            # Auto control loop ONLY executes if Home Assistant hasn't issued a manual override override command
-            if not manual_override:
+            if time.time() >= manual_hold_until:
                 if temp >= FAN_ON_TEMP_C and not fan.value:
                     fan.on()
                     on_fan_change(True, temp)

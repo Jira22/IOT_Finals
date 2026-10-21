@@ -8,7 +8,7 @@ from gpiozero import DistanceSensor, PWMOutputDevice
 # ----------------------------- Settings ---------------------------------
 TRIG_PIN = 25
 ECHO_PIN = 24
-BUZZER_PIN = 22   # red alarm LED (was a buzzer)
+BUZZER_PIN = 22   # passive buzzer via S8050
 
 MAX_DISTANCE_M = 2.0     
 THRESHOLD_CM = 10.0      
@@ -23,8 +23,6 @@ TONE_CLOSE_HZ = 1500
 TONE_ALARM_HZ = 3000
 
 DOOR_OPEN_ALARM_S = 30   
-ALARM_REPEAT_S = 2.0     
-ALARM_BEEPS = 5          
 
 # MQTT Configuration (CHANGE TO YOUR LAPTOP'S IP ADDRESS)
 MQTT_BROKER = "192.168.99.90"
@@ -35,19 +33,23 @@ TOPIC_BUZZER_SET = "homeassistant/switch/buzzer/set"
 
 # --------------------------- Hardware setup ------------------------------
 sensor = DistanceSensor(echo=ECHO_PIN, trigger=TRIG_PIN, max_distance=MAX_DISTANCE_M)
-buzzer = PWMOutputDevice(BUZZER_PIN, frequency=TONE_OPEN_HZ, initial_value=0)
 
 # Lock to avoid background thread beep collisions with main threat warnings
 buzzer_lock = threading.Lock()
+manual_buzz = threading.Event()  # set while the HA buzzer switch is ON
 
 def beep(times: int = 1, on: float = 0.15, off: float = 0.1, freq: int = TONE_OPEN_HZ) -> None:
+    # PWM exists only while beeping: a software-PWM thread running all the time jitters the echo timing
     with buzzer_lock:
-        buzzer.frequency = freq
-        for _ in range(times):
-            buzzer.value = 1   # alarm is an LED now: full on, no tone
-            time.sleep(on)
-            buzzer.value = 0     
-            time.sleep(off)
+        buzzer = PWMOutputDevice(BUZZER_PIN, frequency=freq, initial_value=0)
+        try:
+            for _ in range(times):
+                buzzer.value = 0.5
+                time.sleep(on)
+                buzzer.value = 0
+                time.sleep(off)
+        finally:
+            buzzer.close()
 
 # --------------------------- MQTT setup ----------------------------------
 def on_connect(client, userdata, flags, reason_code, properties):
@@ -59,14 +61,17 @@ def on_message(client, userdata, msg):
     payload = msg.payload.decode().upper()
     print(f"Received Buzzer override command from HA: {payload}")
     
-    if payload == "ON":
+    if payload == "ON" and not manual_buzz.is_set():
+        manual_buzz.set()
         client.publish(TOPIC_BUZZER_STATE, "ON", retain=True)
-        # Use a non-blocking thread so beep loops don't lock your incoming message streams
-        threading.Thread(target=trigger_remote_alarm).start()
+        threading.Thread(target=ring_until_off, daemon=True).start()
+    elif payload == "OFF":
+        manual_buzz.clear()  # ring_until_off stops after its current beep
+        client.publish(TOPIC_BUZZER_STATE, "OFF", retain=True)
 
-def trigger_remote_alarm():
-    beep(times=3, on=0.1, off=0.1, freq=TONE_ALARM_HZ)
-    mqtt_client.publish(TOPIC_BUZZER_STATE, "OFF", retain=True)
+def ring_until_off():
+    while manual_buzz.is_set():
+        beep(times=1, on=0.3, off=0.2, freq=TONE_ALARM_HZ)
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_connect = on_connect
@@ -114,8 +119,7 @@ def main() -> None:
     door_open = False
     change_count = 0
     open_since = None        
-    alarm_active = False     
-    last_alarm_beep = 0.0
+    alarm_active = False
 
     # Ensure baseline state is synchronized to Home Assistant on startup
     mqtt_client.publish(TOPIC_DOOR_STATE, "OFF", retain=True)
@@ -151,9 +155,8 @@ def main() -> None:
                 if not alarm_active:
                     alarm_active = True
                     on_door_alarm(open_for)
-                if time.time() - last_alarm_beep >= ALARM_REPEAT_S:
-                    beep(times=ALARM_BEEPS, on=0.1, off=0.1, freq=TONE_ALARM_HZ)
-                    last_alarm_beep = time.time()
+                # one beep per loop: rings until the door closes, and the sensor still gets read between beeps
+                beep(times=1, on=0.3, off=0.1, freq=TONE_ALARM_HZ)
 
         time.sleep(POLL_INTERVAL_S)
 
@@ -164,6 +167,4 @@ if __name__ == "__main__":
         print("\nStopped.")
     finally:
         mqtt_client.loop_stop()
-        buzzer.off()
         sensor.close()
-        buzzer.close()

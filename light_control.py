@@ -9,7 +9,8 @@ LIGHT_PIN = 23
 
 LIGHT_TIMEOUT_S = 10      
 POLL_INTERVAL_S = 0.5
-PIR_WARMUP_S = 10         
+PIR_WARMUP_S = 10
+MANUAL_HOLD_S = 300       # a command from HA wins over the PIR for this long
 RELAY_ACTIVE_HIGH = True   # LED driven directly
 
 # MQTT Configuration (CHANGE TO YOUR LAPTOP'S IP ADDRESS)
@@ -24,7 +25,7 @@ pir = MotionSensor(PIR_PIN)
 light = OutputDevice(LIGHT_PIN, active_high=RELAY_ACTIVE_HIGH, initial_value=False)
 
 # Global tracker to remember if the light was overridden by Home Assistant
-manual_override_time = 0.0
+manual_hold_until = 0.0
 
 # --------------------------- MQTT setup ----------------------------------
 def on_connect(client, userdata, flags, reason_code, properties):
@@ -33,19 +34,14 @@ def on_connect(client, userdata, flags, reason_code, properties):
     client.publish(TOPIC_LIGHT_STATE, "ON" if light.value else "OFF", retain=True)
 
 def on_message(client, userdata, msg):
-    global manual_override_time
+    global manual_hold_until
     payload = msg.payload.decode().upper()
     print(f"Received command from HA: {payload}")
-    
-    if payload == "ON":
-        if not light.value:
-            light.on()
-            client.publish(TOPIC_LIGHT_STATE, "ON", retain=True)
-        manual_override_time = time.time()  # Keep it on like motion was detected
-    elif payload == "OFF":
-        if light.value:
-            light.off()
-            client.publish(TOPIC_LIGHT_STATE, "OFF", retain=True)
+
+    if payload in ("ON", "OFF"):
+        light.on() if payload == "ON" else light.off()
+        manual_hold_until = time.time() + MANUAL_HOLD_S  # motion and timeout are ignored meanwhile
+        client.publish(TOPIC_LIGHT_STATE, payload, retain=True)
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_client.on_connect = on_connect
@@ -57,8 +53,6 @@ def on_light_change(is_on: bool) -> None:
     mqtt_client.publish(TOPIC_LIGHT_STATE, state, retain=True)
 
 def main() -> None:
-    global manual_override_time
-    
     # Start MQTT background thread
     try:
         mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
@@ -81,19 +75,16 @@ def main() -> None:
             mqtt_client.publish(TOPIC_MOTION_STATE, "ON" if motion else "OFF", retain=True)
             last_reported_motion = motion
 
-        if motion:
+        if time.time() < manual_hold_until:
+            pass  # HA command is in charge
+        elif motion:
             if not light.value:
                 light.on()
                 on_light_change(True)
-            if light.value:
-                last_motion = time.time()  
-
-        # Check if it should turn off (either due to no motion, or manual HA override expiring)
-        elif light.value:
-            effective_last_interaction = max(last_motion, manual_override_time)
-            if (time.time() - effective_last_interaction) >= LIGHT_TIMEOUT_S:
-                light.off()
-                on_light_change(False)
+            last_motion = time.time()
+        elif light.value and (time.time() - last_motion) >= LIGHT_TIMEOUT_S:
+            light.off()
+            on_light_change(False)
 
         time.sleep(POLL_INTERVAL_S)
 
