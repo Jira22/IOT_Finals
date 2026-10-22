@@ -11,7 +11,6 @@ LIGHT_PIN = 23
 LIGHT_TIMEOUT_S = 10      
 POLL_INTERVAL_S = 0.5
 PIR_WARMUP_S = 10
-MANUAL_HOLD_S = 300       # a command from HA wins over the PIR for this long
 RELAY_ACTIVE_HIGH = True   # LED driven directly
 
 # MQTT Configuration: the laptop's IP, set with MQTT_BROKER=<ip> when starting, default below
@@ -26,8 +25,7 @@ TOPIC_MOTION_STATE = "homeassistant/binary_sensor/motion/state"
 pir = MotionSensor(PIR_PIN)
 light = OutputDevice(LIGHT_PIN, active_high=RELAY_ACTIVE_HIGH, initial_value=False)
 
-# Global tracker to remember if the light was overridden by Home Assistant
-manual_hold_until = 0.0
+last_motion = 0.0  # also set by an HA "ON", so the normal timeout then turns the light off
 
 # --------------------------- MQTT setup ----------------------------------
 def on_connect(client, userdata, flags, reason_code, properties):
@@ -37,13 +35,13 @@ def on_connect(client, userdata, flags, reason_code, properties):
     client.publish(TOPIC_LIGHT_STATE, "ON" if light.value else "OFF", retain=True)
 
 def on_message(client, userdata, msg):
-    global manual_hold_until
+    global last_motion
     payload = msg.payload.decode().upper()
     print(f"Received command from HA: {payload}")
 
     if payload in ("ON", "OFF"):
         light.on() if payload == "ON" else light.off()
-        manual_hold_until = time.time() + MANUAL_HOLD_S  # motion and timeout are ignored meanwhile
+        last_motion = time.time()
         client.publish(TOPIC_LIGHT_STATE, payload, retain=True)
 
 mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -65,7 +63,7 @@ def main() -> None:
     time.sleep(PIR_WARMUP_S)
     print("Ready. (Ctrl+C to stop)")
 
-    last_motion = 0.0
+    global last_motion
     last_reported_motion = False
 
     while True:
@@ -76,9 +74,7 @@ def main() -> None:
             mqtt_client.publish(TOPIC_MOTION_STATE, "ON" if motion else "OFF", retain=True)
             last_reported_motion = motion
 
-        if time.time() < manual_hold_until:
-            pass  # HA command is in charge
-        elif motion:
+        if motion:
             if not light.value:
                 light.on()
                 on_light_change(True)
